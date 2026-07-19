@@ -1,0 +1,49 @@
+name: update social stats
+on:
+  schedule:
+    - cron: "0 3 * * *"   # daily 03:00 UTC (~10:00 WIB)
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  stats:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: fetch live follower counts
+        run: |
+          python3 - <<'PY'
+          import json, re, sys, urllib.request, datetime
+          UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"
+          def get(url, headers=None):
+              req = urllib.request.Request(url, headers={"User-Agent": UA, **(headers or {})})
+              return urllib.request.urlopen(req, timeout=20).read().decode("utf-8", "ignore")
+          stats = json.load(open("stats.json"))
+          changed = False
+          try:
+              d = json.loads(get("https://i.instagram.com/api/v1/users/web_profile_info/?username=dj_xora",
+                                 {"x-ig-app-id": "936619743392459"}))
+              n = d["data"]["user"]["edge_followed_by"]["count"]
+              if n > 0: stats["instagram_followers"] = n; changed = True
+          except Exception as e:
+              print("ig failed:", e, file=sys.stderr)
+          try:
+              h = get("https://www.tiktok.com/@its_xorasakura",
+                      {"User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15"})
+              f = re.search(r'"followerCount":(\d+)', h)
+              l = re.search(r'"heartCount":(\d+)', h)
+              if f: stats["tiktok_followers"] = int(f.group(1)); changed = True
+              if l: stats["tiktok_likes"] = int(l.group(1)); changed = True
+          except Exception as e:
+              print("tiktok failed:", e, file=sys.stderr)
+          if changed:
+              stats["updated"] = datetime.date.today().isoformat()
+              json.dump(stats, open("stats.json", "w"), indent=2)
+              print("updated:", stats)
+          PY
+      - name: commit if changed
+        run: |
+          git config user.name "xora-stats-bot"
+          git config user.email "actions@users.noreply.github.com"
+          git add stats.json
+          git diff --cached --quiet || (git commit -m "stats: auto-update $(date -u +%F)" && git push)
